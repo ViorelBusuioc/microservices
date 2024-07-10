@@ -1,0 +1,190 @@
+services:
+
+  #############################################
+  ## MySQL Database
+  mysql:
+    container_name: mysql
+    image: mysql:latest
+    environment:
+      MYSQL_ROOT_PASSWORD: Locomotiva1
+    volumes:
+      - mysql-data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    restart: unless-stopped
+
+
+  #############################################
+  ## Keycloak
+  keycloak:
+    container_name: keycloak
+    image: quay.io/keycloak/keycloak:25.0.1
+    command: [ "start-dev", "--import-realm" ]
+    environment:
+      DB_VENDOR: MYSQL
+      DB_ADDR: mysql
+      DB_DATABASE: keycloak
+      DB_USER: keycloak
+      DB_PASSWORD: password
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./realms/:/opt/keycloak/data/import/
+      - keycloak-data:/opt/keycloak/data
+    depends_on:
+      - mysql
+
+
+  #############################################
+  ## Kafka Zookeeper
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+
+  #############################################
+  ## Kafka Broker
+  broker:
+    image: confluentinc/cp-kafka:latest
+    container_name: broker
+    ports:
+      - "9092:9092"
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://broker:29092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+
+
+  #############################################
+  ## Zipkin
+  zipkin:
+    image: openzipkin/zipkin
+    container_name: zipkin
+    ports:
+      - "9411:9411"
+
+
+  #############################################
+  ## Discovery Server
+  discovery-server:
+    image: viorelb/discovery-server:latest
+    container_name: discovery-server
+    pull_policy: always
+    ports:
+      - "8761:8761"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    depends_on:
+      - zipkin
+
+  #############################################
+  ## API Gateway
+  api-gateway:
+    image: viorelb/api-gateway:latest
+    container_name: api-gateway
+    pull_policy: always
+    ports:
+      - "8181:8080"
+    expose:
+      - "8181"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_SECURITY=TRACE
+    depends_on:
+      - zipkin
+      - discovery-server
+      - keycloak
+
+
+  #############################################
+  ## Product Service
+  product-service:
+    container_name: product-service
+    image: viorelb/product-service:latest
+    pull_policy: always
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      DATABASE_HOST: mysql
+      DATABASE_PORT: 3306
+      DATABASE_NAME: products
+      DATABASE_USER: viorel
+      DATABASE_PASSWORD: test123
+    depends_on:
+      - mysql
+      - discovery-server
+      - api-gateway
+
+
+  #############################################
+  ## Order Service
+  order-service:
+    container_name: order-service
+    image: viorelb/order-service:latest
+    pull_policy: always
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/order-service
+      DATABASE_HOST: mysql
+      DATABASE_PORT: 3306
+      DATABASE_NAME: orders
+      DATABASE_USER: viorel
+      DATABASE_PASSWORD: test123
+    depends_on:
+      - mysql
+      - broker
+      - zipkin
+      - discovery-server
+      - api-gateway
+
+
+  #############################################
+  ## Inventory Service
+  inventory-service:
+    container_name: inventory-service
+    image: viorelb/inventory-service:latest
+    pull_policy: always
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/inventory-service
+      DATABASE_HOST: mysql
+      DATABASE_PORT: 3306
+      DATABASE_NAME: inventory
+      DATABASE_USER: viorel
+      DATABASE_PASSWORD: test123
+    depends_on:
+      - mysql
+      - discovery-server
+      - api-gateway
+
+
+  #############################################
+  ## Notification Service
+  notification-service:
+    container_name: notification-service
+    image: viorelb/notification-service:latest
+    pull_policy: always
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+    depends_on:
+      - zipkin
+      - broker
+      - discovery-server
+      - api-gateway
+
+volumes:
+  mysql-data:
+  keycloak-data:
+
